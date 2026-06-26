@@ -69,6 +69,12 @@ resilience4j:
           - java.io.IOException
         ignoreExceptions:
           - com.ameya.eventgatewayservice.exception.DuplicateEventConflictException
+  rate limiter:
+    instances:
+      eventSubmission:
+        limitForPeriod: 10       # allow 10 calls...
+        limitRefreshPeriod: 1s   # ...per 1 second window
+        timeoutDuration: 0
 
 management:
   endpoint:

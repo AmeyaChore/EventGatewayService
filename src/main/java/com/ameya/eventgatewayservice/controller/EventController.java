@@ -5,6 +5,7 @@ import com.ameya.eventgatewayservice.dto.EventResponse;
 import com.ameya.eventgatewayservice.model.EventEntity;
 import com.ameya.eventgatewayservice.model.EventSubmissionResult;
 import com.ameya.eventgatewayservice.service.event.EventService;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.micrometer.tracing.Tracer;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ public class EventController {
     }
 
     @PostMapping
+    @RateLimiter(name = "eventSubmission")
     public ResponseEntity<EventResponse> submitEvent(@Valid @RequestBody EventRequest request) {
         log.info("Received event submission eventId={} accountId={} traceId={}",
                 request.eventId(), request.accountId(), currentTraceId());
