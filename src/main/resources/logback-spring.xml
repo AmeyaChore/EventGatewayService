@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- service.name baked into every log line - set per-service when you
+         copy this file into the Account Service (change the value there) -->
+    <springProperty scope="context" name="serviceName" source="spring.application.name" defaultValue="event-gateway"/>
+    <springProperty scope="context" name="activeProfile" source="spring.profiles.active" defaultValue="default"/>
+
+    <!-- ===================================================================
+         APPENDER: Console (JSON, for dev/local visibility and for
+         containerized prod where stdout is collected by the platform,
+         e.g. Docker/Kubernetes log driver -> Fluentd/Loki/CloudWatch)
+         =================================================================== -->
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <customFields>{"service":"${serviceName}","env":"${activeProfile}"}</customFields>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <message>message</message>
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <level>level</level>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <!-- Async wrapper: decouples the calling thread from the I/O cost of
+         writing each log line. This is the part plain application.yml
+         properties cannot give you - without it, every log statement blocks
+         the request thread until the write completes. -->
+    <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="CONSOLE_JSON"/>
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold> <!-- never silently drop logs, even under burst load -->
+        <includeCallerData>false</includeCallerData> <!-- caller data is expensive to compute; skip unless debugging -->
+        <neverBlock>true</neverBlock> <!-- if queue is full, drop rather than block the request thread -->
+    </appender>
+
+    <!-- ===================================================================
+         APPENDER: Full application log file, JSON, rotated
+         =================================================================== -->
+    <appender name="FILE_JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/${serviceName}.log</file>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <customFields>{"service":"${serviceName}","env":"${activeProfile}"}</customFields>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/${serviceName}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>3GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE_JSON"/>
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <includeCallerData>false</includeCallerData>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <!-- ===================================================================
+         APPENDER: Error-only file - separate stream for WARN/ERROR so
+         alerting/monitoring tools can tail a small, high-signal file
+         instead of grepping the full application log
+         =================================================================== -->
+    <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+        <file>logs/${serviceName}-error.log</file>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <customFields>{"service":"${serviceName}","env":"${activeProfile}"}</customFields>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/${serviceName}-error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>90</maxHistory> <!-- keep errors longer than general logs -->
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <!-- ===================================================================
+         PROFILE-SPECIFIC WIRING
+         =================================================================== -->
+
+    <!-- local/dev: human-readable console only, no file I/O, full DEBUG
+         available without touching this file (use application-dev.yml) -->
+    <springProfile name="dev,local">
+        <appender name="CONSOLE_PLAIN" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE_PLAIN"/>
+        </root>
+    </springProfile>
+
+    <!-- prod/docker: structured JSON to stdout (for container log drivers)
+         AND to rotated files (for local inspection / non-container hosts),
+         plus the dedicated error stream, all async -->
+    <springProfile name="prod,docker">
+        <root level="INFO">
+            <appender-ref ref="ASYNC_CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+    <!-- default (no profile set): behave like prod so nothing is
+         accidentally under-configured if a profile flag is forgotten -->
+    <springProfile name="default">
+        <root level="INFO">
+            <appender-ref ref="ASYNC_CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
+            <appender-ref ref="FILE_ERROR"/>
+        </root>
+    </springProfile>
+
+    <!-- ===================================================================
+         PACKAGE-LEVEL OVERRIDES
+         =================================================================== -->
+    <logger name="com.example.eventgateway" level="INFO"/>
+    <logger name="org.springframework.web" level="WARN"/>
+    <logger name="org.hibernate.SQL" level="WARN"/>
+    <logger name="feign" level="INFO"/>
+
+    <!-- Suppress noisy access-pattern logging for the health check endpoint
+         specifically - this is the kind of filtering YAML properties cannot
+         express, only logback's logger/filter config can. -->
+    <logger name="org.springframework.web.servlet.DispatcherServlet" level="WARN"/>
+
+</configuration>

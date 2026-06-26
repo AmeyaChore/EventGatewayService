@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: EventGatewayService
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}   # dev locally; set prod/docker for the JSON+file+async pipeline
+
+  datasource:
+    url: jdbc:h2:mem:event
+    driver-class-name: org.h2.Driver
+    username: user
+    password: password
+
+    jpa:
+      hibernate:
+        ddl-auto: create-drop
+      show-sql: true
+      properties:
+        hibernate:
+          format_sql: true
+
+    h2:
+      console:
+        enabled: true
+        path: /h2-console
+
+  # --- Feign timeouts ---
+  cloud:
+    openfeign:
+      client:
+        config:
+          account-service:
+            connect-timeout: 1000   # ms - fail fast on connection issues
+            read-timeout: 2000      # ms - Account Service calls should be fast (local network)
+      # NOT enabling spring.cloud.openfeign.circuitbreaker here on purpose:
+      # the breaker is applied via @CircuitBreaker on AccountServiceClientImpl,
+      # one layer above the Feign client itself - enabling both would wrap
+      # the call in two independent breakers.
+
+# --- Account Service connection ---
+accountService:
+  url: ${ACCOUNT_SERVICE_URL:http://localhost:8081}
+
+# --- Resilience4j circuit breaker: annotation-based wiring (@CircuitBreaker
+# in AccountServiceClientImpl), thresholds defined here as properties ---
+resilience4j:
+  circuit breaker:
+    instances:
+      accountService:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10                  # evaluate the last 10 calls
+        minimumNumberOfCalls: 5                # need 5 calls before the breaker can trip
+        failureRateThreshold: 50               # OPEN if >=50% of those calls fail
+        waitDurationInOpenState: 10s           # stay OPEN for 10s before trying again
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+
+management:
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true   # surfaces breaker state in /actuator/health
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, metrics, circuitbreakers, info
+  tracing:
+    sampling:
+      # Fraction of requests that get a real trace recorded end-to-end.
+      # 1.0 = trace everything (fine for a take-home/demo and for low-traffic
+      # services). In real production under load, this is typically much
+      # lower (e.g. 0.05-0.1) to control export volume/cost - the traceId is
+      # still generated either way, but unsampled traces are NOT exported.
+      probability: 1.0
+      enabled: true
+
+
+logging:
+  level:
+    root: INFO
+    com.example.eventgateway: INFO
+    org.springframework.web: WARN
+    org.hibernate.SQL: WARN
+    feign: INFO   # bump to DEBUG temporarily to see full Feign request/response bodies
+
