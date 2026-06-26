@@ -5,6 +5,7 @@ import com.ameya.eventgatewayservice.exception.AccountServiceUnavailableExceptio
 import com.ameya.eventgatewayservice.service.accountapi.feign.AccountServiceFeignClient;
 import com.ameya.eventgatewayservice.service.accountapi.models.TransactionRequest;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,6 +38,7 @@ public class AccountServiceClientImpl implements AccountServiceClient {
     }
 
     @Override
+    @Retry(name = "accountService", fallbackMethod = "applyTransactionFallback")
     @CircuitBreaker(name = "accountService", fallbackMethod = "applyTransactionFallback")
     public void applyTransaction(EventRequest request) {
         TransactionRequest payload = new TransactionRequest(
