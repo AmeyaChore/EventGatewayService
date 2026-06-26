@@ -29,8 +29,8 @@ public class EventService {
     private final ObjectMapper objectMapper;
 
     public EventService(EventRepository eventRepository,
-                         AccountServiceClient accountServiceClient,
-                         ObjectMapper objectMapper) {
+                        AccountServiceClient accountServiceClient,
+                        ObjectMapper objectMapper) {
         this.eventRepository = eventRepository;
         this.accountServiceClient = accountServiceClient;
         this.objectMapper = objectMapper;
@@ -38,23 +38,39 @@ public class EventService {
 
     /**
      * Handles a new event submission with idempotency semantics:
-     *  - unseen eventId            -> persist, forward downstream, return wasNewlyCreated=true
-     *  - seen eventId, same payload -> return the original silently, wasNewlyCreated=false
-     *  - seen eventId, diff payload -> throw DuplicateEventConflictException (409)
+     *  - unseen eventId                        -> persist, forward downstream, wasNewlyCreated=true
+     *  - seen eventId, status=FAILED_DOWNSTREAM -> RETRY forwarding (the original attempt never
+     *                                              got a confirmed result), wasNewlyCreated=false
+     *  - seen eventId, same payload, otherwise  -> return the original silently, wasNewlyCreated=false
+     *  - seen eventId, different payload        -> throw DuplicateEventConflictException (409)
      */
     public EventSubmissionResult submitEvent(EventRequest request) {
         int incomingHash = hashPayload(request);
 
         return eventRepository.findById(request.eventId())
-                .map(existing -> handleExistingEvent(existing, incomingHash))
+                .map(existing -> handleExistingEvent(existing, request, incomingHash))
                 .orElseGet(() -> handleNewEvent(request, incomingHash));
     }
 
-    private EventSubmissionResult handleExistingEvent(EventEntity existing, int incomingHash) {
+    private EventSubmissionResult handleExistingEvent(EventEntity existing, EventRequest request, int incomingHash) {
         if (existing.getPayloadHash() != incomingHash) {
             log.warn("Duplicate eventId {} submitted with a different payload", existing.getEventId());
             throw new DuplicateEventConflictException(existing.getEventId());
         }
+
+        if (existing.getStatus() == EventStatus.FAILED_DOWNSTREAM) {
+            // The original attempt never got a confirmed outcome from the
+            // Account Service - retry forwarding now rather than silently
+            // returning a stale FAILED_DOWNSTREAM record. Safe to retry
+            // because the Account Service is expected to treat the same
+            // Idempotency-Key (eventId) as a no-op if it actually already
+            // applied the transaction.
+            log.info("Retrying forwarding for eventId {} (previous attempt was FAILED_DOWNSTREAM)",
+                    existing.getEventId());
+            forwardToAccountService(existing, request);
+            return new EventSubmissionResult(existing, false);
+        }
+
         log.info("Idempotent replay of eventId {}, returning original", existing.getEventId());
         return new EventSubmissionResult(existing, false);
     }
@@ -79,25 +95,39 @@ public class EventService {
         // Account Service call below fails (graceful degradation).
         eventRepository.save(entity);
 
+        forwardToAccountService(entity, request);
+
+        return new EventSubmissionResult(entity, true);
+    }
+
+    /**
+     * Calls the Account Service and updates the entity's status based on the
+     * outcome. Shared by both a fresh submission and a retry of a
+     * previously FAILED_DOWNSTREAM event, so both paths get identical,
+     * correct error handling - no duplicated/divergent try-catch logic.
+     *
+     * On failure: persists FAILED_DOWNSTREAM and RE-THROWS, so the caller
+     * (and ultimately GlobalExceptionHandler) always knows forwarding did
+     * not succeed. Never swallows an exception silently.
+     */
+    private void forwardToAccountService(EventEntity entity, EventRequest request) {
         try {
-//            accountServiceClient.applyTransaction(request);
+            accountServiceClient.applyTransaction(request);
             entity.setStatus(EventStatus.FORWARDED);
+            eventRepository.save(entity);
         } catch (AccountServiceUnavailableException ex) {
             log.error("Account Service unavailable while forwarding eventId {}: {}",
                     request.eventId(), ex.getMessage());
             entity.setStatus(EventStatus.FAILED_DOWNSTREAM);
             eventRepository.save(entity);
             throw ex; // let the controller translate this into a 503
-        } catch (Exception ex){
-            log.error("UnExpected Exception occurred while forwarding eventId {}: {}",
-                    request.eventId(), ex.getMessage());
+        } catch (Exception ex) {
+            log.error("Unexpected exception while forwarding eventId {}: {}",
+                    request.eventId(), ex.getMessage(), ex);
             entity.setStatus(EventStatus.FAILED_DOWNSTREAM);
             eventRepository.save(entity);
             throw ex;
         }
-
-        eventRepository.save(entity);
-        return new EventSubmissionResult(entity, true);
     }
 
     public EventEntity getEvent(String eventId) {
