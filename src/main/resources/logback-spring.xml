@@ -96,7 +96,7 @@
     <springProfile name="dev,local">
         <appender name="CONSOLE_PLAIN" class="ch.qos.logback.core.ConsoleAppender">
             <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-                <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-},%X{spanId:-}] %logger{36} - %msg%n</pattern>
+                <pattern>%d{HH:mm:ss.SSS} %-5level traceId :- %X{traceId:-} spanId :- %X{spanId:-} %logger{36} - %msg%n</pattern>
             </encoder>
         </appender>
         <root level="INFO">
