@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Account Service directly.
  */
 @RestController
-@RequestMapping("/accounts")
+@RequestMapping("/events/accounts")
 public class AccountController {
 
     private final AccountServiceClient accountService;
