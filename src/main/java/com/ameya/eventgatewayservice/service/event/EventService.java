@@ -1,9 +1,7 @@
 package com.ameya.eventgatewayservice.service.event;
 
 import com.ameya.eventgatewayservice.dto.EventRequest;
-import com.ameya.eventgatewayservice.exception.AccountServiceUnavailableException;
-import com.ameya.eventgatewayservice.exception.DuplicateEventConflictException;
-import com.ameya.eventgatewayservice.exception.EventNotFoundException;
+import com.ameya.eventgatewayservice.exception.*;
 import com.ameya.eventgatewayservice.model.EventEntity;
 import com.ameya.eventgatewayservice.model.EventStatus;
 import com.ameya.eventgatewayservice.model.EventSubmissionResult;
@@ -115,6 +113,18 @@ public class EventService {
             accountServiceClient.applyTransaction(request);
             entity.setStatus(EventStatus.FORWARDED);
             eventRepository.save(entity);
+        } catch (AccountNotFoundException ex) {
+            log.error("Account Not Found in Account Service eventId {}: {}",
+                    request.eventId(), ex.getMessage());
+            entity.setStatus(EventStatus.FAILED_DOWNSTREAM);
+            eventRepository.save(entity);
+            throw ex; // let the controller trans
+        } catch (AccountServiceBadRequestException ex) {
+            log.error("Bad Request sent to AccountService eventId {}: {}",
+                    request.eventId(), ex.getMessage());
+            entity.setStatus(EventStatus.FAILED_DOWNSTREAM);
+            eventRepository.save(entity);
+            throw ex; // let the controller trans
         } catch (AccountServiceUnavailableException ex) {
             log.error("Account Service unavailable while forwarding eventId {}: {}",
                     request.eventId(), ex.getMessage());
