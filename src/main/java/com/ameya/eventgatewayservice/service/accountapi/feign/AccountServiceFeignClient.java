@@ -1,12 +1,11 @@
 package com.ameya.eventgatewayservice.service.accountapi.feign;
 
+import com.ameya.eventgatewayservice.service.accountapi.models.AccountDetailsResponse;
+import com.ameya.eventgatewayservice.service.accountapi.models.BalanceResponse;
 import com.ameya.eventgatewayservice.service.accountapi.models.TransactionRequest;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * Declarative HTTP client for the Account Service.
@@ -35,9 +34,16 @@ import org.springframework.web.bind.annotation.RequestHeader;
 public interface AccountServiceFeignClient {
 
     @PostMapping("/accounts/{accountId}/transactions")
-    ResponseEntity<Void> applyTransaction(
+    ResponseEntity<Object> applyTransaction(
             @PathVariable String accountId,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody TransactionRequest request
     );
+
+    @GetMapping("/accounts/{accountId}/balance")
+    ResponseEntity<BalanceResponse> getBalance(@PathVariable String accountId);
+
+    @GetMapping("/accounts/{accountId}")
+    ResponseEntity<AccountDetailsResponse> getAccount(@PathVariable String accountId);
+
 }

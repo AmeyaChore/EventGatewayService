@@ -43,7 +43,7 @@ accountService:
 # --- Resilience4j circuit breaker: annotation-based wiring (@CircuitBreaker
 # in AccountServiceClientImpl), thresholds defined here as properties ---
 resilience4j:
-  circuit breaker:
+  circuitbreaker:
     instances:
       accountService:
         registerHealthIndicator: true
@@ -54,6 +54,21 @@ resilience4j:
         waitDurationInOpenState: 10s           # stay OPEN for 10s before trying again
         permittedNumberOfCallsInHalfOpenState: 3
         automaticTransitionFromOpenToHalfOpenEnabled: true
+        ignoreExceptions:
+          - feign.FeignException.NotFound
+          - feign.FeignException.BadRequest
+      accountServiceRead:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        ignoreExceptions:
+          - feign.FeignException.NotFound
+          - feign.FeignException.BadRequest
   retry:
     instances:
       accountService:
@@ -69,7 +84,19 @@ resilience4j:
           - java.io.IOException
         ignoreExceptions:
           - com.ameya.eventgatewayservice.exception.DuplicateEventConflictException
-  rate limiter:
+      accountServiceRead:
+        maxAttempts: 2                    # fewer attempts than the write path - a balance
+        # read is cheap to just fail fast and let the
+        # Gateway's caller retry the GET itself if needed
+        waitDuration: 200ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+        enableRandomizedWait: true
+        randomizedWaitFactor: 0.5
+        retryExceptions:
+          - feign.RetryableException
+          - java.io.IOException
+  ratelimiter:
     instances:
       eventSubmission:
         limitForPeriod: 10       # allow 10 calls...
