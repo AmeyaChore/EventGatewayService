@@ -7,7 +7,10 @@ import com.ameya.eventgatewayservice.model.EventSubmissionResult;
 import com.ameya.eventgatewayservice.service.event.EventService;
 import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.micrometer.tracing.Tracer;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +35,21 @@ public class EventController {
 
     @PostMapping
     @RateLimiter(name = "eventSubmission")
+    @Operation(
+            summary = "Submit a transaction event",
+            description = """
+                    Idempotent on eventId: a repeat submission with the SAME payload returns \
+                    the original event (200). A repeat submission with a DIFFERENT payload for \
+                    the same eventId is rejected (409). Rate limited to 10 requests/second \
+                    shared across all callers."""
+    )
+    @ApiResponse(responseCode = "201", description = "New event accepted and forwarded to the Account Service")
+    @ApiResponse(responseCode = "200", description = "Idempotent replay - same eventId and payload as a prior submission")
+    @ApiResponse(responseCode = "400", description = "Validation failed (missing/invalid field)")
+    @ApiResponse(responseCode = "404", description = "Account Service reports the account does not exist")
+    @ApiResponse(responseCode = "409", description = "Same eventId submitted before with a DIFFERENT payload")
+    @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
+    @ApiResponse(responseCode = "503", description = "Account Service is unreachable; event was stored locally for later retry")
     public ResponseEntity<EventResponse> submitEvent(@Valid @RequestBody EventRequest request) {
         log.info("Received event submission eventId={} accountId={} traceId={}",
                 request.eventId(), request.accountId(), currentTraceId());
@@ -49,15 +67,23 @@ public class EventController {
         return ResponseEntity.ok(response);
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<EventResponse> getEvent(@PathVariable String id) {
-        EventEntity entity = eventService.getEvent(id);
+    @GetMapping("/{eventId}")
+    @Operation(summary = "Get a single event by its ID")
+    @ApiResponse(responseCode = "200", description = "Event found")
+    @ApiResponse(responseCode = "404", description = "No event exists with this ID")
+    public ResponseEntity<EventResponse> getEvent(@PathVariable(required = true) @NotBlank String eventId) {
+        EventEntity entity = eventService.getEvent(eventId);
         return ResponseEntity.ok(toResponse(entity));
     }
 
     @GetMapping
+    @Operation(
+            summary = "List events for an account",
+            description = "Returns events for the given account, ordered chronologically by eventTimestamp."
+    )
+    @ApiResponse(responseCode = "200", description = "List of events for the account (may be empty)")
     public ResponseEntity<List<EventResponse>> getEventsForAccount(
-            @RequestParam("account") String accountId) {
+            @RequestParam(value = "account", required = true) @NotBlank String accountId) {
         List<EventResponse> events = eventService.getEventsForAccount(accountId)
                 .stream()
                 .map(this::toResponse)

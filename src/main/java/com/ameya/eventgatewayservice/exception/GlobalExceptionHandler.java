@@ -1,6 +1,7 @@
 package com.ameya.eventgatewayservice.exception;
 
 import com.ameya.eventgatewayservice.model.ErrorResponse;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.micrometer.tracing.Tracer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,12 +42,31 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(404, "Not Found", ex.getMessage(), traceId()));
     }
 
+    @ExceptionHandler(AccountNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleAccountNotFound(AccountNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ErrorResponse.of(404, "Not Found", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(AccountServiceBadRequestException.class)
+    public ResponseEntity<ErrorResponse> handleAccountNotFound(AccountServiceBadRequestException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ErrorResponse.of(400, "Bad Request", ex.getMessage(), traceId()));
+    }
+
     @ExceptionHandler(AccountServiceUnavailableException.class)
     public ResponseEntity<ErrorResponse> handleAccountServiceUnavailable(
             AccountServiceUnavailableException ex) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ErrorResponse.of(503, "Service Unavailable",
                         "Account Service is unreachable, event was stored locally", traceId()));
+    }
+
+    @ExceptionHandler(RequestNotPermitted.class)
+    public ResponseEntity<ErrorResponse> handleRateLimitExceeded(RequestNotPermitted ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(ErrorResponse.of(429, "Too Many Requests",
+                        "Rate limit exceeded, please slow down", traceId()));
     }
 
     @ExceptionHandler(Exception.class)
